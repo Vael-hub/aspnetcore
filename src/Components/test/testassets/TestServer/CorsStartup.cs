@@ -1,3 +1,7 @@
+// Copyright (c) .NET Foundation. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
+
+using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -27,7 +31,7 @@ namespace TestServer
                 // specify explicitly which origin we want to allow.
 
                 options.AddPolicy("AllowAll", policy => policy
-                    .SetIsOriginAllowed(host => host.StartsWith("http://localhost:") || host.StartsWith("http://127.0.0.1:"))
+                    .SetIsOriginAllowed(host => host.StartsWith("http://localhost:", StringComparison.Ordinal) || host.StartsWith("http://127.0.0.1:", StringComparison.Ordinal))
                     .AllowAnyHeader()
                     .WithExposedHeaders("MyCustomHeader")
                     .AllowAnyMethod()
