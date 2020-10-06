@@ -22,14 +22,14 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
 
         private readonly Http3FrameWriter _frameWriter;
         private readonly Http3Connection _http3Connection;
-        private readonly HttpConnectionContext _context;
+        private readonly Http3StreamContext _context;
         private readonly Http3RawFrame _incomingFrame = new Http3RawFrame();
         private volatile int _isClosed;
         private int _gracefulCloseInitiator;
 
         private bool _haveReceivedSettingsFrame;
 
-        public Http3ControlStream(Http3Connection http3Connection, HttpConnectionContext context)
+        public Http3ControlStream(Http3Connection http3Connection, Http3StreamContext context)
         {
             var httpLimits = context.ServiceContext.ServerOptions.Limits;
 
@@ -38,7 +38,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
 
             _frameWriter = new Http3FrameWriter(
                 context.Transport.Output,
-                context.ConnectionContext,
+                context.StreamContext,
                 context.TimeoutControl,
                 httpLimits.MinResponseDataRate,
                 context.ConnectionId,
@@ -86,39 +86,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
 
             // TODO make this actually close the Http3Stream by telling quic to close the stream.
             return false;
-        }
-
-        private async ValueTask HandleEncodingTask()
-        {
-            var encoder = new EncoderStreamReader(10000); // TODO get value from limits
-            while (_isClosed == 0)
-            {
-                var result = await Input.ReadAsync();
-                var readableBuffer = result.Buffer;
-                if (!readableBuffer.IsEmpty)
-                {
-                    // This should always read all bytes in the input no matter what.
-                    encoder.Read(readableBuffer);
-                }
-                Input.AdvanceTo(readableBuffer.End);
-            }
-        }
-
-        private async ValueTask HandleDecodingTask()
-        {
-            var decoder = new DecoderStreamReader();
-            while (_isClosed == 0)
-            {
-                var result = await Input.ReadAsync();
-                var readableBuffer = result.Buffer;
-                var consumed = readableBuffer.Start;
-                var examined = readableBuffer.Start;
-                if (!readableBuffer.IsEmpty)
-                {
-                    decoder.Read(readableBuffer);
-                }
-                Input.AdvanceTo(readableBuffer.End);
-            }
         }
 
         internal async ValueTask SendStreamIdAsync(long id)
@@ -181,8 +148,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
 
             if (streamType == ControlStream)
             {
-                if (_http3Connection.ControlStream != null)
+                if (!_http3Connection.SetInboundControlStream(this))
                 {
+                    // TODO propagate these errors to connection.
                     throw new Http3ConnectionException("HTTP_STREAM_CREATION_ERROR");
                 }
 
@@ -190,16 +158,15 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
             else if (streamType == EncoderStream)
             {
-                if (_http3Connection.EncoderStream != null)
+                if (!_http3Connection.SetInboundEncoderStream(this))
                 {
                     throw new Http3ConnectionException("HTTP_STREAM_CREATION_ERROR");
                 }
                 await HandleEncodingTask();
-                return;
             }
             else if (streamType == DecoderStream)
             {
-                if (_http3Connection.DecoderStream != null)
+                if (!_http3Connection.SetInboundDecoderStream(this))
                 {
                     throw new Http3ConnectionException("HTTP_STREAM_CREATION_ERROR");
                 }
@@ -209,7 +176,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             {
                 // TODO Close the control stream as it's unexpected.
             }
-            return;
         }
 
         private async Task HandleControlStream()
@@ -249,6 +215,33 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
         }
 
+        private async ValueTask HandleEncodingTask()
+        {
+            // Noop encoding task. Settings make it so we don't need to read content of encoder and decoder.
+            // An endpoint MUST allow its peer to create an encoder stream and a
+            // decoder stream even if the connection's settings prevent their use.
+
+            while (_isClosed == 0)
+            {
+                var result = await Input.ReadAsync();
+                var readableBuffer = result.Buffer;
+                Input.AdvanceTo(readableBuffer.End);
+            }
+        }
+
+        private async ValueTask HandleDecodingTask()
+        {
+            // Noop encoding task. Settings make it so we don't need to read content of encoder and decoder.
+            // An endpoint MUST allow its peer to create an encoder stream and a
+            // decoder stream even if the connection's settings prevent their use.
+            while (_isClosed == 0)
+            {
+                var result = await Input.ReadAsync();
+                var readableBuffer = result.Buffer;
+                Input.AdvanceTo(readableBuffer.End);
+            }
+        }
+
         private ValueTask ProcessHttp3ControlStream(in ReadOnlySequence<byte> payload)
         {
             // Two things:
@@ -282,7 +275,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
 
             _haveReceivedSettingsFrame = true;
-            using var closedRegistration = _context.ConnectionContext.ConnectionClosed.Register(state => ((Http3ControlStream)state).OnStreamClosed(), this);
+            using var closedRegistration = _context.StreamContext.ConnectionClosed.Register(state => ((Http3ControlStream)state).OnStreamClosed(), this);
 
             while (true)
             {
