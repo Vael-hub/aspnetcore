@@ -140,7 +140,9 @@ namespace Microsoft.AspNetCore.Components.E2ETest.Tests
 
             // Click the first link and verify that it worked as expected
             lazyAssemblyLink.Click();
+            var pkgButton = Browser.Exists(By.Id("use-package-button"));
             Assert.True(HasLoadedAssembly("Newtonsoft.Json.dll"));
+            pkgButton.Click();
 
             // Navigate to the next page and verify that it loaded its assembly
             lazyRoutesLink.Click();
